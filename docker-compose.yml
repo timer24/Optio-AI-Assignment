@@ -1,0 +1,97 @@
+# Docker Compose definition for the "Drift Happens" infrastructure.
+#
+# What this file does:
+#   Spins up four services that our apps depend on but do not own:
+#     - PostgreSQL      → relational store (customers, segments, snapshots, deltas, outbox)
+#     - RabbitMQ        → message broker (delta events, dependent-segment recomputation jobs)
+#     - Redis           → cache + debounce timers + distributed locks
+#     - Elasticsearch   → delta history index (audit trail with full-text search)
+#
+# Development pattern:
+#   Infra runs in containers (this file). API + Web run natively on the host with hot reload.
+#   On Day 5 we add Dockerfiles for the apps so the final `docker compose up` boots everything.
+#
+# Networking:
+#   Compose auto-creates a network where services reach each other by container name.
+#   Host-side apps (NestJS dev, Angular dev) reach services via localhost:<published-port>.
+#
+# Volumes:
+#   Each service has a named volume so data survives `docker compose down` (without -v).
+#   `docker compose down -v` wipes all data — useful for reseeding.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: drift-postgres
+    environment:
+      POSTGRES_USER: drift
+      POSTGRES_PASSWORD: drift
+      POSTGRES_DB: drift
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drift -d drift"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: drift-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: drift
+      RABBITMQ_DEFAULT_PASS: drift
+    ports:
+      - "5672:5672"      # AMQP protocol — apps connect here
+      - "15672:15672"    # Management UI — open http://localhost:15672 (drift / drift)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: drift-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: drift-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  redis_data:
+  elasticsearch_data:

@@ -1,0 +1,22 @@
+{
+  "name": "drift-happens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Optio assignment — dynamic segment system with delta detection, cascading, and backpressure",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace apps/api",
+    "dev:web": "npm run start --workspace apps/web",
+    "build": "npm run build --workspaces --if-present",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f",
+    "infra:reset": "docker compose down -v && docker compose up -d"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
