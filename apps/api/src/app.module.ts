@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { HealthController } from './health/health.controller';
 import { PrismaModule } from './prisma/prisma.module';
+import { SegmentsModule } from './segments/segments.module';
 
 @Module({
   imports: [
@@ -9,6 +10,7 @@ import { PrismaModule } from './prisma/prisma.module';
     // it via ConfigService without re-importing ConfigModule.
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
+    SegmentsModule,
   ],
   controllers: [HealthController],
 })
