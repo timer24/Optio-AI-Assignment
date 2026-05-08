@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
-import { Segment, SegmentType } from '@prisma/client';
-import type { SegmentRule } from '@drift/shared';
+import { Prisma, Segment, SegmentType } from '@prisma/client';
+import type { SegmentDeltaPayload, SegmentRule } from '@drift/shared';
+import { EventTypes } from '@drift/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { DependencyService } from './dependency.service';
 import { EvaluatorService } from './evaluator.service';
@@ -91,7 +92,10 @@ export class SegmentEvaluationService {
 
     const batchId = randomUUID();
 
-    // 6. Persist changes atomically.
+    // 6. Persist changes atomically. The OutboxEvent insert lives inside the
+    //    same transaction as the membership and delta writes so the system
+    //    can never end up in a state where the DB has the change but no event
+    //    will be produced (or vice versa) — the outbox pattern.
     await this.prisma.$transaction(async (tx) => {
       if (added.length > 0) {
         await tx.segmentMember.createMany({
@@ -119,6 +123,22 @@ export class SegmentEvaluationService {
               batchId,
             })),
           ],
+        });
+
+        // Emit the event only when there's a real change — empty deltas
+        // would create unnecessary cascades and UI noise downstream.
+        const payload: SegmentDeltaPayload = {
+          segmentId: segment.id,
+          segmentName: segment.name,
+          batchId,
+          added,
+          removed,
+        };
+        await tx.outboxEvent.create({
+          data: {
+            eventType: EventTypes.SegmentDelta,
+            payload: payload as unknown as Prisma.InputJsonValue,
+          },
         });
       }
     });

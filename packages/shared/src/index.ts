@@ -2,3 +2,4 @@
 // Populated as we build out the domain — segments, deltas, events, DTOs.
 
 export * from './segment-rules';
+export * from './segment-events';

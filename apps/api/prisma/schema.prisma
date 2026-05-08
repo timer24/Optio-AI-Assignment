@@ -26,6 +26,14 @@ enum DeltaChange {
   REMOVE
 }
 
+enum OutboxStatus {
+  // Written by the orchestrator inside the membership-change transaction;
+  // not yet sent to RabbitMQ.
+  PENDING
+  // Successfully delivered to the broker.
+  PUBLISHED
+}
+
 model Customer {
   id        String   @id @default(uuid(7))
   email     String   @unique
@@ -138,4 +146,30 @@ model SegmentDependency {
   child  Segment @relation("Child", fields: [childId], references: [id], onDelete: Cascade)
 
   @@id([parentId, childId])
+}
+
+// Transactional outbox. Solves the dual-write problem between Postgres and
+// RabbitMQ: the orchestrator inserts a row here in the same transaction
+// that updates SegmentMember + SegmentDelta. A separate publisher then
+// drains PENDING rows to the broker. If the DB write fails, no event is
+// produced; if the DB write succeeds, the event will eventually be delivered
+// (at-least-once — consumers must be idempotent).
+model OutboxEvent {
+  id          String       @id @default(uuid(7))
+  // Dot-notation identifier matching the broker's routing key convention,
+  // e.g., "segment.delta". String (not enum) so new event types can be
+  // introduced without a migration.
+  eventType   String
+  // The event body as JSONB. Shape depends on eventType; producers and
+  // consumers agree on it via @drift/shared types.
+  payload     Json
+  status      OutboxStatus @default(PENDING)
+  createdAt   DateTime     @default(now())
+  // Stamped when the publisher successfully delivers to RabbitMQ.
+  publishedAt DateTime?
+
+  // Hot query for the publisher: `WHERE status='PENDING' ORDER BY createdAt`.
+  // The composite index supports the filter (leftmost prefix on status) and
+  // the ordering without an extra sort.
+  @@index([status, createdAt])
 }
