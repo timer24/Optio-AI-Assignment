@@ -148,6 +148,30 @@ model SegmentDependency {
   @@id([parentId, childId])
 }
 
+// Consumer-side dedup record. Each row marks "consumer X has handled
+// event Y". Used by consumers with non-idempotent side effects (e.g. the
+// campaign consumer that simulates sending notifications) — they try to
+// insert before doing the work, and the unique constraint on the
+// composite PK rejects duplicates atomically.
+//
+// The cascade consumer doesn't need this table because its work is
+// naturally idempotent: re-evaluating a segment that hasn't changed is a
+// no-op via the orchestrator's diff step.
+//
+// Composite PK on (eventId, consumerName) lets multiple consumers dedup
+// the same event independently — the campaign consumer's row never
+// blocks an Elasticsearch indexer (or any future consumer) from
+// processing the same event.
+model ProcessedEvent {
+  // The OutboxEvent.id from the wire envelope.
+  eventId      String
+  // Stable identifier of the consumer (e.g., "campaign-consumer").
+  consumerName String
+  processedAt  DateTime @default(now())
+
+  @@id([eventId, consumerName])
+}
+
 // Transactional outbox. Solves the dual-write problem between Postgres and
 // RabbitMQ: the orchestrator inserts a row here in the same transaction
 // that updates SegmentMember + SegmentDelta. A separate publisher then

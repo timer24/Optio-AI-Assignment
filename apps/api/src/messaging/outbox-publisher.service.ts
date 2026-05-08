@@ -93,7 +93,7 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
 
       // The routing key matches the eventType by convention so consumers
       // can bind their queues by event-type pattern.
-      const accepted = this.rmq.publish(row.eventType, envelope);
+      const accepted = await this.rmq.publish(row.eventType, envelope);
       if (!accepted) {
         // The channel's internal buffer is full — back off and let the next
         // tick retry. Don't mark as PUBLISHED.

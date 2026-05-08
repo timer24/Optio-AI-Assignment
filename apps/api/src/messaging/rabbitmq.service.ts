@@ -26,13 +26,28 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   // have independent prefetch settings and fail in isolation.
   private publishChannel!: Channel;
 
-  constructor(private readonly config: ConfigService) {}
+  // Resolved once the connection + topology are ready. NestJS runs
+  // OnModuleInit hooks within a module in parallel, so consumer services
+  // may call createChannel() before our own onModuleInit finishes. Anyone
+  // touching the connection must await this first — `await` on an
+  // already-resolved promise is essentially free.
+  private readonly ready: Promise<void>;
+  private readyResolve!: () => void;
+  private readyReject!: (err: Error) => void;
+
+  constructor(private readonly config: ConfigService) {
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
+  }
 
   async onModuleInit(): Promise<void> {
-    const url = this.config.getOrThrow<string>('RABBITMQ_URL');
-    this.logger.log(`connecting to RabbitMQ at ${url}`);
+    try {
+      const url = this.config.getOrThrow<string>('RABBITMQ_URL');
+      this.logger.log(`connecting to RabbitMQ at ${url}`);
 
-    this.connection = await amqp.connect(url);
+      this.connection = await amqp.connect(url);
     this.connection.on('error', (err) =>
       this.logger.error(`AMQP connection error: ${err.message}`),
     );
@@ -63,6 +78,14 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `topology ready: exchange="${Exchanges.Events}", queues=[${Object.values(Queues).join(', ')}]`,
     );
+
+      // Signal to anyone awaiting `ready` that the connection is up and
+      // topology is in place.
+      this.readyResolve();
+    } catch (err) {
+      this.readyReject(err instanceof Error ? err : new Error(String(err)));
+      throw err;
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -83,8 +106,13 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
    * Publish a JSON-serialized payload to the events exchange. `persistent`
    * tells RabbitMQ to write the message to disk so it survives a broker
    * restart — pairs with the durable queue declaration above.
+   *
+   * Async because we await `ready` to handle the case where a publisher
+   * runs before the connection has been established. Once ready resolves,
+   * this is effectively a no-op overhead.
    */
-  publish(routingKey: string, payload: unknown): boolean {
+  async publish(routingKey: string, payload: unknown): Promise<boolean> {
+    await this.ready;
     return this.publishChannel.publish(
       Exchanges.Events,
       routingKey,
@@ -97,8 +125,13 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
    * Create a fresh channel for a consumer. Each consumer gets its own so it
    * can set independent prefetch values and so a consumer-side error doesn't
    * tear down the publisher's channel.
+   *
+   * Awaits `ready` because consumer services' onModuleInit hooks can race
+   * RabbitMQService's own onModuleInit — this guarantees the connection
+   * exists before we try to derive a channel from it.
    */
   async createChannel(): Promise<Channel> {
+    await this.ready;
     return this.connection.createChannel();
   }
 }
