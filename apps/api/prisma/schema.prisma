@@ -21,6 +21,11 @@ enum SegmentType {
   STATIC
 }
 
+enum DeltaChange {
+  ADD
+  REMOVE
+}
+
 model Customer {
   id        String   @id @default(uuid(7))
   email     String   @unique
@@ -35,6 +40,7 @@ model Customer {
 
   transactions       Transaction[]
   segmentMemberships SegmentMember[]
+  segmentDeltas      SegmentDelta[]
 }
 
 model Transaction {
@@ -69,7 +75,13 @@ model Segment {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
-  members SegmentMember[]
+  members      SegmentMember[]
+  deltas       SegmentDelta[]
+  // Edges where this segment is the parent — i.e., segments whose change
+  // triggers this one to recompute live as my "downstream" via these rows.
+  asParent     SegmentDependency[] @relation("Parent")
+  // Edges where this segment is the child — i.e., parents I depend on.
+  asChild      SegmentDependency[] @relation("Child")
 }
 
 // Materialized current membership: "who is in segment X right now".
@@ -86,4 +98,44 @@ model SegmentMember {
   @@id([segmentId, customerId])
   // Reverse lookup: "which segments is customer Y in?"
   @@index([customerId])
+}
+
+// Append-only history of membership changes. Every row records a single
+// (segment, customer, ADD|REMOVE) event. Rows from the same evaluation pass
+// share a batchId so consumers can fetch a whole "delta event" coherently.
+model SegmentDelta {
+  id         String      @id @default(uuid(7))
+  segmentId  String
+  customerId String
+  change     DeltaChange
+  // UUID stamped onto every delta produced by one evaluation pass.
+  // Lets a consumer ask "all changes from this batch" in one query.
+  batchId    String
+  occurredAt DateTime    @default(now())
+
+  segment  Segment  @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  // Hot query: recent changes for the segment detail page.
+  @@index([segmentId, occurredAt])
+  // Hot query: "everything that changed in this batch".
+  @@index([batchId])
+  // Less hot but useful: a customer's full segment history.
+  @@index([customerId])
+}
+
+// Materialized cascade graph. Edges are extracted from rules' `in_segment`
+// predicates at save time so the cascade can lookup "who depends on me?"
+// without reparsing every segment's rule at runtime.
+//
+// Composite PK on (parentId, childId) gives uniqueness AND a usable index for
+// the forward query (`WHERE parentId = ?`) via leftmost-prefix.
+model SegmentDependency {
+  parentId String
+  childId  String
+
+  parent Segment @relation("Parent", fields: [parentId], references: [id], onDelete: Cascade)
+  child  Segment @relation("Child", fields: [childId], references: [id], onDelete: Cascade)
+
+  @@id([parentId, childId])
 }
