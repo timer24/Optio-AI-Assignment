@@ -21,6 +21,11 @@ export const Queues = {
   // members (logs / would-send-email). Needs explicit dedup via
   // ProcessedEvent because side effects are non-idempotent.
   Campaign: 'drift.campaign',
+  // Realtime consumer: reads segment.delta and broadcasts to all connected
+  // WebSocket clients. No dedup table — UI updates are idempotent (the
+  // client just re-applies state) and missing an event due to a race in a
+  // dedup check is worse than receiving it twice.
+  Realtime: 'drift.realtime',
 } as const;
 
 // Routing keys used when publishing to the exchange. Match @drift/shared's

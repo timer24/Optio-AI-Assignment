@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MetricsService } from './metrics.service';
@@ -44,6 +45,75 @@ export class SegmentsController {
   }
 
   // ── Real endpoints ─────────────────────────────────────────────────────
+
+  /**
+   * List all segments with their current member counts. Used by the UI's
+   * segment list page. Member count is materialized via SegmentMember.count
+   * — cheap because of the (segmentId, customerId) PK index.
+   */
+  @Get()
+  async list() {
+    const segments = await this.prisma.segment.findMany({
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { members: true } } },
+    });
+    return segments.map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description,
+      type: s.type,
+      memberCount: s._count.members,
+      updatedAt: s.updatedAt,
+    }));
+  }
+
+  /**
+   * Single segment detail with the full rule (so the UI can render it) and
+   * current member count.
+   */
+  @Get(':id')
+  async detail(@Param('id') id: string) {
+    const s = await this.prisma.segment.findUniqueOrThrow({
+      where: { id },
+      include: { _count: { select: { members: true } } },
+    });
+    return {
+      id: s.id,
+      name: s.name,
+      description: s.description,
+      type: s.type,
+      rule: s.rule,
+      memberCount: s._count.members,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+    };
+  }
+
+  /**
+   * Recent delta history for a segment. Backs the segment-detail "what just
+   * changed" feed. Customer name joined for human-readable display.
+   */
+  @Get(':id/deltas')
+  async deltas(
+    @Param('id') id: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const limit = Math.min(Math.max(parseInt(limitRaw ?? '50', 10) || 50, 1), 200);
+    const rows = await this.prisma.segmentDelta.findMany({
+      where: { segmentId: id },
+      orderBy: { occurredAt: 'desc' },
+      take: limit,
+      include: { customer: { select: { name: true, email: true } } },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      customerId: r.customerId,
+      customerName: r.customer.name,
+      change: r.change,
+      batchId: r.batchId,
+      occurredAt: r.occurredAt,
+    }));
+  }
 
   /**
    * Recompute one segment's membership and emit a delta. The body is

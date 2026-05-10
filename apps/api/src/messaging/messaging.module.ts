@@ -5,6 +5,7 @@ import { CascadeConsumerService } from './cascade-consumer.service';
 import { ChangeBufferService } from './change-buffer.service';
 import { OutboxPublisherService } from './outbox-publisher.service';
 import { RabbitMQService } from './rabbitmq.service';
+import { RealtimeGateway } from './realtime.gateway';
 
 // @Global so any feature module can inject RabbitMQService without having
 // to import MessagingModule explicitly. Same reasoning as PrismaModule —
@@ -25,6 +26,7 @@ import { RabbitMQService } from './rabbitmq.service';
     CascadeConsumerService,
     CampaignConsumerService,
     ChangeBufferService,
+    RealtimeGateway,
   ],
   exports: [RabbitMQService, ChangeBufferService],
 })
