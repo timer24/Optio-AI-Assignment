@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { SegmentsModule } from '../segments/segments.module';
 import { CampaignConsumerService } from './campaign-consumer.service';
 import { CascadeConsumerService } from './cascade-consumer.service';
+import { ChangeBufferService } from './change-buffer.service';
 import { OutboxPublisherService } from './outbox-publisher.service';
 import { RabbitMQService } from './rabbitmq.service';
 
@@ -23,7 +24,8 @@ import { RabbitMQService } from './rabbitmq.service';
     OutboxPublisherService,
     CascadeConsumerService,
     CampaignConsumerService,
+    ChangeBufferService,
   ],
-  exports: [RabbitMQService],
+  exports: [RabbitMQService, ChangeBufferService],
 })
 export class MessagingModule {}
