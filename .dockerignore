@@ -1,0 +1,43 @@
+# Root .dockerignore — applies to every build whose context is the repo
+# root (currently both apps/api/Dockerfile and apps/web/Dockerfile).
+#
+# Each entry shrinks the build context that gets COPYed into the daemon
+# and protects against accidentally baking secrets or local-only state
+# into the image.
+
+# Dependencies — reinstalled fresh in the builder stage.
+**/node_modules
+
+# Build outputs — regenerated inside the build.
+**/dist
+**/.angular
+**/.next
+**/.nest
+**/coverage
+**/tsconfig.tsbuildinfo
+**/tsconfig.build.tsbuildinfo
+
+# Local-only env files — DATABASE_URL etc. come from docker-compose.
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Editor / OS noise.
+**/.vscode
+**/.idea
+**/.DS_Store
+**/Thumbs.db
+
+# VCS — not needed to build runtime artifacts.
+.git
+.gitignore
+.gitattributes
+
+# Docker artifacts — avoid recursive copies.
+**/Dockerfile
+**/docker-compose*.yml
+**/.dockerignore
+
+# Docs.
+README.md
+**/*.md

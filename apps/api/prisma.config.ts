@@ -8,10 +8,13 @@ export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
-    // Prisma 6 moved the seed command out of package.json. Same effect as
-    // the legacy `"prisma": { "seed": "..." }` block — runs on `db seed`
-    // and on first `migrate dev` for a fresh database.
-    seed: "ts-node --transpile-only prisma/seed.ts",
+    // Prisma 6 moved the seed command out of package.json. Compiler
+    // options are forced inline because ts-node's auto-detection picks up
+    // module: NodeNext in some environments (notably Alpine Node 24 inside
+    // the Docker container), then fails because moduleResolution defaults
+    // don't match. Pinning both ensures the seed runs identically in dev
+    // and in the production container.
+    seed: 'ts-node --transpile-only -O {"module":"commonjs","moduleResolution":"node"} prisma/seed.ts',
   },
   engine: "classic",
   datasource: {

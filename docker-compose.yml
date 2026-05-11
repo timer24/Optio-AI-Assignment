@@ -8,8 +8,14 @@
 #     - Elasticsearch   → delta history index (audit trail with full-text search)
 #
 # Development pattern:
-#   Infra runs in containers (this file). API + Web run natively on the host with hot reload.
-#   On Day 5 we add Dockerfiles for the apps so the final `docker compose up` boots everything.
+#   For day-to-day work, run only the infra block: `docker compose up -d
+#   postgres rabbitmq redis elasticsearch` and run API + Web on the host
+#   for hot reload (`npm run dev:api`, `npm run dev:web`).
+#
+#   For a one-shot full-stack demo: `docker compose up --build` boots
+#   everything in containers. Then seed once:
+#     docker compose exec api npx prisma db seed
+#   Open http://localhost:4200 in a browser.
 #
 # Networking:
 #   Compose auto-creates a network where services reach each other by container name.
@@ -88,6 +94,53 @@ services:
       timeout: 10s
       retries: 20
       start_period: 30s
+    restart: unless-stopped
+
+  # NestJS API. Build context is the repo root so the workspaces install
+  # in the Dockerfile can resolve @drift/shared. On every container start
+  # the entrypoint runs `prisma migrate deploy` (idempotent) before booting.
+  # Seed is NOT automatic — run `docker compose exec api npx prisma db seed`
+  # once after first boot to populate demo data.
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: drift-api
+    # Hostnames here match the compose service names, not localhost — those
+    # only work because compose puts everything on a shared bridge network.
+    environment:
+      DATABASE_URL: postgresql://drift:drift@postgres:5432/drift?schema=public
+      RABBITMQ_URL: amqp://drift:drift@rabbitmq:5672
+      REDIS_URL: redis://redis:6379
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      # `service_healthy` means compose waits for each service's healthcheck
+      # to pass before starting the api — protects against the API trying
+      # to connect to a postgres/rabbit that hasn't accepted connections yet.
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Angular SPA served by nginx with an SPA-fallback config.
+  # No env vars needed — the production bundle bakes API_BASE=http://localhost:3000,
+  # which resolves to the api container's host-published port from inside
+  # the user's browser (NOT from inside the web container).
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: drift-web
+    ports:
+      - "4200:80"
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:
