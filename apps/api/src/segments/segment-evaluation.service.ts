@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+} from '@nestjs/common';
 import { Prisma, Segment, SegmentType } from '@prisma/client';
 import type { SegmentDeltaPayload, SegmentRule } from '@drift/shared';
 import { EventTypes } from '@drift/shared';
@@ -28,7 +32,7 @@ export interface EvaluateOptions {
 // so callers (HTTP endpoint, RabbitMQ consumer on Day 3, initial population)
 // share one consistent code path.
 @Injectable()
-export class SegmentEvaluationService {
+export class SegmentEvaluationService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SegmentEvaluationService.name);
 
   constructor(
@@ -37,6 +41,47 @@ export class SegmentEvaluationService {
     private readonly evaluator: EvaluatorService,
     private readonly dependency: DependencyService,
   ) {}
+
+  /**
+   * Run one initial `rebuildAllDynamic` after the entire app graph has
+   * booted. This puts dynamic segments into the right state immediately
+   * after `prisma db seed` (which leaves them empty by design), so the UI
+   * shows correct counts on first load without waiting for a user action
+   * to nudge the debouncer.
+   *
+   * `OnApplicationBootstrap` (not `OnModuleInit`) so that RabbitMQ and the
+   * outbox publisher are guaranteed up before this fires — otherwise
+   * the events this produces would queue against an un-bound exchange.
+   *
+   * Idempotent: if memberships are already correct, the diff is empty and
+   * no events are emitted. So restarting the API on a steady-state DB is
+   * a near-zero-cost no-op.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      const results = await this.rebuildAllDynamic();
+      const totalChanges = results.reduce(
+        (sum, r) => sum + r.added.length + r.removed.length,
+        0,
+      );
+      if (totalChanges > 0) {
+        this.logger.log(
+          `bootstrap: initial rebuild materialized ${totalChanges} membership change(s) across ${results.length} dynamic segment(s)`,
+        );
+      } else {
+        this.logger.log(
+          `bootstrap: ${results.length} dynamic segment(s) already in sync — no-op`,
+        );
+      }
+    } catch (err) {
+      // Don't crash the app if the bootstrap rebuild fails — log loudly so
+      // it surfaces in dev, then continue. A failed bootstrap is recoverable
+      // via the `/segments/rebuild` HTTP endpoint.
+      this.logger.error(
+        `bootstrap rebuild failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   /**
    * Recompute one segment's membership end-to-end:
@@ -98,8 +143,13 @@ export class SegmentEvaluationService {
     //    will be produced (or vice versa) — the outbox pattern.
     await this.prisma.$transaction(async (tx) => {
       if (added.length > 0) {
+        // skipDuplicates: a concurrent evaluation of the same segment
+        // (e.g., a manual /evaluate request racing the cascade) might have
+        // already inserted some of these rows. Composite PK on
+        // (segmentId, customerId) would otherwise throw.
         await tx.segmentMember.createMany({
           data: added.map((customerId) => ({ segmentId: segment.id, customerId })),
+          skipDuplicates: true,
         });
       }
       if (removed.length > 0) {

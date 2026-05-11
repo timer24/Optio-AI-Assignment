@@ -3,6 +3,7 @@
 // view-model shapes that come back from the read endpoints.
 
 export type {
+  CampaignNotificationPayload,
   SegmentDeltaPayload,
   EventEnvelope,
   SegmentRule,
@@ -40,4 +41,18 @@ export interface CustomerSummary {
   id: string;
   name: string;
   email: string;
+}
+
+export interface SegmentMember {
+  customerId: string;
+  name: string;
+  email: string;
+  joinedAt: string;
+}
+
+export interface SegmentMembersPage {
+  total: number;
+  limit: number;
+  offset: number;
+  members: SegmentMember[];
 }

@@ -7,6 +7,9 @@
 // `as const` so TypeScript treats the values as literal types, not `string`.
 export const EventTypes = {
   SegmentDelta: 'segment.delta',
+  // UI-only event. Not a routing key — emitted directly by the campaign
+  // consumer over socket.io to drive the campaign-activity feed in the UI.
+  CampaignNotification: 'campaign.notification',
 } as const;
 
 export type EventType = (typeof EventTypes)[keyof typeof EventTypes];
@@ -35,4 +38,21 @@ export interface EventEnvelope<T = unknown> {
   // ISO timestamp — when the producer wrote the OutboxEvent row.
   createdAt: string;
   payload: T;
+}
+
+// UI-side payload pushed by the campaign consumer over socket.io. Each
+// notification corresponds to one bonus-campaign side-effect that would
+// happen in production (sending an email, pinging a CRM, etc.).
+export interface CampaignNotificationPayload {
+  // Wall-clock ISO timestamp when the campaign consumer fired.
+  at: string;
+  segmentId: string;
+  segmentName: string;
+  // 'ADD' = new members getting onboarded; 'REMOVE' = departed members
+  // being marked inactive in the simulated downstream system.
+  kind: 'ADD' | 'REMOVE';
+  // Up to a handful of human-readable customer names for the feed line.
+  customerNames: string[];
+  // Total count for "+N more" UX when names overflow the preview slice.
+  totalCount: number;
 }

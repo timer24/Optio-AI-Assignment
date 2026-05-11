@@ -6,6 +6,7 @@ import type {
   CustomerSummary,
   DeltaEntry,
   SegmentDetail,
+  SegmentMembersPage,
   SegmentSummary,
 } from './types';
 
@@ -27,6 +28,16 @@ export class SegmentsApi {
   deltas(id: string, limit = 50): Observable<DeltaEntry[]> {
     return this.http.get<DeltaEntry[]>(
       `${API_BASE}/segments/${id}/deltas?limit=${limit}`,
+    );
+  }
+
+  members(
+    id: string,
+    limit = 50,
+    offset = 0,
+  ): Observable<SegmentMembersPage> {
+    return this.http.get<SegmentMembersPage>(
+      `${API_BASE}/segments/${id}/members?limit=${limit}&offset=${offset}`,
     );
   }
 

@@ -8,6 +8,10 @@ export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
+    // Prisma 6 moved the seed command out of package.json. Same effect as
+    // the legacy `"prisma": { "seed": "..." }` block — runs on `db seed`
+    // and on first `migrate dev` for a fresh database.
+    seed: "ts-node --transpile-only prisma/seed.ts",
   },
   engine: "classic",
   datasource: {

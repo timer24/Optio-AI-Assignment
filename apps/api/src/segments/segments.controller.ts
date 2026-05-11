@@ -90,6 +90,47 @@ export class SegmentsController {
   }
 
   /**
+   * Current member list for a segment. Paginated because a segment can hold
+   * thousands of customers; we don't want to ship the whole list to the UI
+   * at once. The list page is read-only — sorted by customer name for a
+   * deterministic display.
+   */
+  @Get(':id/members')
+  async members(
+    @Param('id') id: string,
+    @Query('limit') limitRaw?: string,
+    @Query('offset') offsetRaw?: string,
+  ) {
+    const limit = Math.min(Math.max(parseInt(limitRaw ?? '50', 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(offsetRaw ?? '0', 10) || 0, 0);
+
+    const [total, rows] = await Promise.all([
+      this.prisma.segmentMember.count({ where: { segmentId: id } }),
+      this.prisma.segmentMember.findMany({
+        where: { segmentId: id },
+        orderBy: { customer: { name: 'asc' } },
+        skip: offset,
+        take: limit,
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+        },
+      }),
+    ]);
+
+    return {
+      total,
+      limit,
+      offset,
+      members: rows.map((r) => ({
+        customerId: r.customer.id,
+        name: r.customer.name,
+        email: r.customer.email,
+        joinedAt: r.joinedAt,
+      })),
+    };
+  }
+
+  /**
    * Recent delta history for a segment. Backs the segment-detail "what just
    * changed" feed. Customer name joined for human-readable display.
    */

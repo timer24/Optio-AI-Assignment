@@ -2,7 +2,11 @@ import { Injectable, OnDestroy, signal } from '@angular/core';
 import { Subject, type Observable } from 'rxjs';
 import { io, type Socket } from 'socket.io-client';
 import { API_BASE } from './api-config';
-import { EventTypes, type SegmentDeltaPayload } from './types';
+import {
+  EventTypes,
+  type CampaignNotificationPayload,
+  type SegmentDeltaPayload,
+} from './types';
 
 // Wraps the socket.io connection and re-publishes segment.delta events as
 // a typed Observable. Components subscribe to `deltas$` (or read the
@@ -16,6 +20,11 @@ export class RealtimeService implements OnDestroy {
   private readonly deltaSubject = new Subject<SegmentDeltaPayload>();
   readonly deltas$: Observable<SegmentDeltaPayload> =
     this.deltaSubject.asObservable();
+
+  /** Last `campaign.notification` payload — drives the campaign-feed UI. */
+  private readonly campaignSubject = new Subject<CampaignNotificationPayload>();
+  readonly campaign$: Observable<CampaignNotificationPayload> =
+    this.campaignSubject.asObservable();
 
   /** Signal mirroring the underlying socket's connection state. */
   readonly connected = signal(false);
@@ -33,10 +42,17 @@ export class RealtimeService implements OnDestroy {
     this.socket.on(EventTypes.SegmentDelta, (payload: SegmentDeltaPayload) => {
       this.deltaSubject.next(payload);
     });
+    this.socket.on(
+      EventTypes.CampaignNotification,
+      (payload: CampaignNotificationPayload) => {
+        this.campaignSubject.next(payload);
+      },
+    );
   }
 
   ngOnDestroy(): void {
     this.socket.disconnect();
     this.deltaSubject.complete();
+    this.campaignSubject.complete();
   }
 }

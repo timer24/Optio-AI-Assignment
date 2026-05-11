@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  OnDestroy,
+  OnInit,
+  inject,
+  signal,
+} from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -6,6 +13,7 @@ import { SegmentsApi } from '../api/segments-api';
 import { RealtimeService } from '../api/realtime';
 import type { SegmentSummary, SegmentDeltaPayload } from '../api/types';
 import { SimulatorPanel } from '../simulator/simulator-panel';
+import { CampaignFeed } from '../campaign/campaign-feed';
 
 // Visual hint shown briefly next to a segment when its membership changed
 // in response to a realtime delta event. Cleared after a few seconds so
@@ -19,7 +27,7 @@ interface DeltaFlash {
 
 @Component({
   selector: 'app-segments-list',
-  imports: [RouterLink, DatePipe, SimulatorPanel],
+  imports: [RouterLink, DatePipe, SimulatorPanel, CampaignFeed],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="header">
@@ -74,6 +82,8 @@ interface DeltaFlash {
         </tbody>
       </table>
     }
+
+    <app-campaign-feed />
 
     <app-simulator-panel (actionTriggered)="refreshList()" />
   `,
@@ -185,7 +195,7 @@ interface DeltaFlash {
     }
   `,
 })
-export class SegmentsListPage implements OnInit {
+export class SegmentsListPage implements OnInit, OnDestroy {
   private readonly api = inject(SegmentsApi);
   protected readonly rt = inject(RealtimeService);
 
@@ -193,23 +203,37 @@ export class SegmentsListPage implements OnInit {
   protected readonly loading = signal(true);
   protected readonly error = signal<string | null>(null);
 
-  // Map of segmentId → recent flash badge. Cleared by a periodic sweeper
-  // started in ngOnInit.
+  // Map of segmentId → recent flash badge. Cleared by a periodic sweeper.
   protected readonly flashes = signal<Record<string, DeltaFlash>>({});
 
-  ngOnInit(): void {
-    this.refreshList();
+  private flashGcInterval: ReturnType<typeof setInterval> | null = null;
 
+  constructor() {
+    // takeUntilDestroyed must be called in an injection context (the
+    // constructor) — calling it from ngOnInit throws at runtime.
     this.rt.deltas$
       .pipe(takeUntilDestroyed())
       .subscribe((payload) => this.applyDelta(payload));
+  }
 
-    // Expire stale flash badges every second.
-    setInterval(() => this.gcFlashes(), 1000);
+  ngOnInit(): void {
+    this.refreshList();
+    // Expire stale flash badges every second. Tracked so we can clear it
+    // on destroy — otherwise routing back and forth piles up timers.
+    this.flashGcInterval = setInterval(() => this.gcFlashes(), 1000);
+  }
+
+  ngOnDestroy(): void {
+    if (this.flashGcInterval) clearInterval(this.flashGcInterval);
   }
 
   refreshList(): void {
-    this.loading.set(true);
+    // Only show the spinner on the very first load. Refetches triggered
+    // after a simulator action (or after deltas land) must not swap the
+    // table out for a "Loading..." line — that hides the flash badges
+    // we just set on incoming deltas.
+    const isFirstLoad = this.segments().length === 0;
+    if (isFirstLoad) this.loading.set(true);
     this.error.set(null);
     this.api.list().subscribe({
       next: (rows) => {

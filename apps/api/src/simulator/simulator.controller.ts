@@ -33,6 +33,15 @@ interface SimulateBulkBody {
   chunkSize?: number;
 }
 
+interface AdvanceTimeBody {
+  // How many days to fast-forward. Shifting transactions back by N days is
+  // mathematically identical to advancing wall-clock time by N days as far
+  // as our metrics (tx_count_30d, sum_amount_60d, last_tx_age_days) are
+  // concerned — and it doesn't require plumbing a virtual "now" through
+  // MetricsService.
+  days: number;
+}
+
 // HTTP entry points the UI (and the curl/manual tester) uses to trigger
 // data changes. Every mutation here funnels into ChangeBufferService —
 // that's how a single customer update ends up triggering segment
@@ -170,6 +179,57 @@ export class SimulatorController {
       chunkSize,
       chunks: Math.ceil(count / chunkSize),
       uniqueCustomers: customers.length,
+    };
+  }
+
+  /**
+   * Advance the simulated clock by N days. Implementation: shift every
+   * Transaction.occurredAt back by N days, then fan-out a customer-changed
+   * signal so the debouncer triggers a global recompute.
+   *
+   * Why shift the data, not the clock? Three reasons:
+   *   1. Metrics already use `now` — shifting transactions reuses that
+   *      logic without forking a "virtual now" parameter through it.
+   *   2. The DB becomes the single source of truth for elapsed time.
+   *   3. Reversing is just calling with negative N (or reseed).
+   *
+   * Surfaces the "30 days passed → customer drops out of Active Buyers"
+   * scenario from the assignment, which is otherwise impossible to
+   * demonstrate without waiting 30 actual days.
+   */
+  @Post('advance-time')
+  @HttpCode(202)
+  async advanceTime(@Body() body: AdvanceTimeBody) {
+    const days = Number(body?.days);
+    if (!Number.isFinite(days) || days < 1 || days > 365) {
+      throw new BadRequestException('days must be between 1 and 365');
+    }
+
+    const intervalLiteral = `${Math.floor(days)} days`;
+    // Raw SQL because a Prisma updateMany with a column-relative date update
+    // requires Prisma.sql template. We keep the days value safely as a
+    // parameterized integer and concatenate the unit as a literal we control.
+    const result = await this.prisma.$executeRaw`
+      UPDATE "Transaction"
+      SET "occurredAt" = "occurredAt" - ${intervalLiteral}::interval
+    `;
+
+    // Mark every customer changed so the debouncer triggers one global
+    // re-evaluation. We don't try to be surgical — every customer's
+    // metrics change when the timeline shifts.
+    const customers = await this.prisma.customer.findMany({
+      select: { id: true },
+    });
+    await this.buffer.markChangedMany(customers.map((c) => c.id));
+
+    this.logger.log(
+      `advance-time: shifted ${result} transaction row(s) back by ${days} day(s) — debouncer will re-evaluate`,
+    );
+
+    return {
+      shiftedTransactions: result,
+      shiftedDays: days,
+      affectedCustomers: customers.length,
     };
   }
 }

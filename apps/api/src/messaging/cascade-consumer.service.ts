@@ -24,10 +24,17 @@ import { Queues } from './topology';
 export class CascadeConsumerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CascadeConsumerService.name);
 
-  // Limits unacked deliveries — without this the broker would push the
-  // entire backlog at once on reconnect. 10 gives some pipelining without
-  // risking too many in-flight DB transactions.
-  private static readonly PREFETCH = 10;
+  // Cascade is inherently sequential: re-evaluating the same child segment
+  // in two parallel handlers races on SegmentMember / SegmentDependency
+  // writes (both transactions compute the same diff against the same
+  // pre-state, both try to insert the same rows → composite-PK violation).
+  //
+  // prefetch=1 serializes cascade work. With 4 dynamic segments and a
+  // tight diff loop, this is plenty fast and removes a whole class of
+  // race conditions. The orchestrator's createMany also uses
+  // skipDuplicates as a belt-and-suspenders guard against any other
+  // caller (e.g., a manual /evaluate request) racing the cascade.
+  private static readonly PREFETCH = 1;
 
   private channel: Channel | null = null;
 

@@ -211,15 +211,21 @@ async function main() {
     },
   });
 
-  // March Campaign — static. Pre-populated with 50 members; rule is recorded
-  // for documentation only (a static segment is defined by its members,
-  // not its rule).
+  // March Campaign — static. Pre-populated with 50 members at seed time.
+  //
+  // The rule below is what "manual refresh" re-evaluates against. It picks
+  // customers with at least 10 lifetime transactions — roughly a third of
+  // the random population qualifies. Clicking "Refresh now" in the UI
+  // therefore produces a *meaningful* delta: some of the original 50
+  // departed, some heavy-spenders newly qualified. That demonstrates the
+  // spec's static-segment behavior: doesn't auto-update on data changes,
+  // but *does* recompute on explicit user refresh.
   const marchCampaign = await prisma.segment.create({
     data: {
       name: 'March Campaign Audience',
-      description: 'Static snapshot for the March 2026 campaign — does not auto-update.',
+      description: 'Static snapshot for the March 2026 campaign — does not auto-update. Manual refresh re-evaluates the rule.',
       type: SegmentType.STATIC,
-      rule: toJsonRule({ kind: 'compare', metric: 'tx_count_total', op: '>=', value: 1 }),
+      rule: toJsonRule({ kind: 'compare', metric: 'tx_count_total', op: '>=', value: 10 }),
     },
   });
 

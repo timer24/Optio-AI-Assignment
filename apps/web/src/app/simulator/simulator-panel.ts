@@ -83,6 +83,22 @@ import type { CustomerSummary } from '../api/types';
           </button>
         </form>
 
+        <!-- Time advance -->
+        <form class="card" (submit)="$event.preventDefault(); fireAdvanceTime()">
+          <h3>Advance time</h3>
+          <label>
+            Days to skip forward
+            <input type="number" min="1" max="365" step="1" [(ngModel)]="advanceDays" name="advanceDays" />
+          </label>
+          <p class="muted small">
+            Shifts every transaction back by N days. Demonstrates the
+            &ldquo;30 days passed &rarr; customer drops out of Active Buyers&rdquo; flow.
+          </p>
+          <button type="submit" [disabled]="busy() || !advanceDays">
+            Skip {{ advanceDays }} day(s)
+          </button>
+        </form>
+
         <!-- Bulk -->
         <form class="card" (submit)="$event.preventDefault(); fireBulk()">
           <h3>Stress test</h3>
@@ -189,6 +205,7 @@ export class SimulatorPanel implements OnInit {
   protected profCustomerId = '';
   protected profileJson = '{"country":"GE"}';
   protected bulkCount = 50000;
+  protected advanceDays = 30;
 
   ngOnInit(): void {
     this.segments.customers().subscribe((rows) => this.customers.set(rows));
@@ -233,6 +250,15 @@ export class SimulatorPanel implements OnInit {
     this.run(() =>
       this.sim.bulkChanges(Number(this.bulkCount)).subscribe({
         next: (r: BulkResponse) => this.done(r),
+        error: (e) => this.failed(e),
+      }),
+    );
+  }
+
+  protected fireAdvanceTime(): void {
+    this.run(() =>
+      this.sim.advanceTime(Number(this.advanceDays)).subscribe({
+        next: (r) => this.done(r),
         error: (e) => this.failed(e),
       }),
     );

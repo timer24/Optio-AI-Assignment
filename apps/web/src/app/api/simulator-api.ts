@@ -41,4 +41,8 @@ export class SimulatorApi {
       count,
     });
   }
+
+  advanceTime(days: number): Observable<unknown> {
+    return this.http.post(`${API_BASE}/simulate/advance-time`, { days });
+  }
 }

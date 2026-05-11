@@ -5,10 +5,15 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import type { Channel, ConsumeMessage } from 'amqplib';
-import type { EventEnvelope, SegmentDeltaPayload } from '@drift/shared';
+import type {
+  CampaignNotificationPayload,
+  EventEnvelope,
+  SegmentDeltaPayload,
+} from '@drift/shared';
 import { EventTypes } from '@drift/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { RabbitMQService } from './rabbitmq.service';
+import { RealtimeGateway } from './realtime.gateway';
 import { Queues } from './topology';
 
 // Bonus consumer: receives segment.delta events and simulates a campaign
@@ -34,6 +39,12 @@ export class CampaignConsumerService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly rmq: RabbitMQService,
     private readonly prisma: PrismaService,
+    // Injected so the campaign consumer can push a "would-notify-X" line
+    // to the UI's campaign feed. The dependency is intentional: the campaign
+    // consumer's simulated side-effect *includes* the UI notification.
+    // Both providers live in @Global MessagingModule; NestJS resolves the
+    // dependency order automatically.
+    private readonly gateway: RealtimeGateway,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -97,18 +108,55 @@ export class CampaignConsumerService implements OnModuleInit, OnModuleDestroy {
     }
 
     // First (and only) time we see this event — do the simulated work.
-    const { segmentName, added, removed } = envelope.payload;
+    const { segmentId, segmentName, added, removed } = envelope.payload;
 
+    // Look up names for the preview. Capping the lookup at the first 3 IDs
+    // bounds the DB cost regardless of batch size — the UI shows up to 3
+    // names plus "+N more".
     if (added.length > 0) {
+      const names = await this.lookupNames(added.slice(0, 3));
       this.logger.log(
         `[campaign] would notify ${added.length} new member(s) of "${segmentName}": ${this.preview(added)}`,
       );
+      this.broadcast({
+        at: new Date().toISOString(),
+        segmentId,
+        segmentName,
+        kind: 'ADD',
+        customerNames: names,
+        totalCount: added.length,
+      });
     }
     if (removed.length > 0) {
+      const names = await this.lookupNames(removed.slice(0, 3));
       this.logger.log(
         `[campaign] would mark ${removed.length} departed member(s) of "${segmentName}" inactive: ${this.preview(removed)}`,
       );
+      this.broadcast({
+        at: new Date().toISOString(),
+        segmentId,
+        segmentName,
+        kind: 'REMOVE',
+        customerNames: names,
+        totalCount: removed.length,
+      });
     }
+  }
+
+  private broadcast(payload: CampaignNotificationPayload): void {
+    this.gateway.broadcastCampaign(payload);
+  }
+
+  private async lookupNames(ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.prisma.customer.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true },
+    });
+    // Preserve the original ordering so the names line up with the IDs
+    // that were the "first N" in the batch.
+    const byId = new Map(rows.map((r) => [r.id, r.name]));
+    return ids.map((id) => byId.get(id) ?? id.slice(0, 8));
   }
 
   // Render the first few customer IDs for log readability — full lists in

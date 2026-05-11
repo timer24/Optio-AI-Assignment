@@ -7,7 +7,11 @@ import {
 import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import type { Channel, ConsumeMessage } from 'amqplib';
 import { Server } from 'socket.io';
-import type { EventEnvelope, SegmentDeltaPayload } from '@drift/shared';
+import type {
+  CampaignNotificationPayload,
+  EventEnvelope,
+  SegmentDeltaPayload,
+} from '@drift/shared';
 import { EventTypes } from '@drift/shared';
 import { RabbitMQService } from './rabbitmq.service';
 import { Queues } from './topology';
@@ -95,6 +99,33 @@ export class RealtimeGateway implements OnModuleInit, OnModuleDestroy {
 
     this.logger.debug(
       `broadcast segment.delta for "${envelope.payload.segmentName}" to all sockets`,
+    );
+  }
+
+  /**
+   * Public surface for other consumers (specifically the campaign consumer)
+   * to push UI-only notifications. We don't go through RabbitMQ for this
+   * channel because:
+   *   - There's no persistence / replay need: a UI notification is a fleeting
+   *     side-effect; if no clients are connected, dropping it is fine.
+   *   - It's already inside the same process; an extra exchange/queue would
+   *     be ceremony with no payoff at this scale.
+   * The trade-off is a direct in-process dependency between two consumers
+   * in the same module, which is documented in CampaignConsumerService.
+   */
+  broadcastCampaign(payload: CampaignNotificationPayload): void {
+    if (!this.server) {
+      // socket.io server hasn't been wired by NestJS yet — happens if a
+      // delta event fires in the narrow window between gateway construction
+      // and platform init. Log so we don't silently drop UI updates.
+      this.logger.warn(
+        `dropping campaign.notification for "${payload.segmentName}" — server not ready`,
+      );
+      return;
+    }
+    this.server.emit(EventTypes.CampaignNotification, payload);
+    this.logger.debug(
+      `broadcast campaign.notification (${payload.kind}, ${payload.totalCount}) for "${payload.segmentName}"`,
     );
   }
 }

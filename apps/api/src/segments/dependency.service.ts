@@ -58,13 +58,30 @@ export class DependencyService {
       );
     }
 
+    // Compute the desired set of edges OUTSIDE the transaction. Then inside
+    // the transaction, only delete edges no longer needed and insert the
+    // newly-needed ones — both operations tolerate concurrent writes.
+    //
+    // This used to be a blunt deleteMany + createMany, which raced under
+    // concurrent cascade re-evaluations of the same child segment: T1 and
+    // T2 both delete (no-op for T2 because T1's commit isn't visible yet),
+    // both insert, second insert hits the (parentId, childId) PK conflict.
+    // `skipDuplicates: true` makes the insert idempotent under that race.
     await this.prisma.$transaction(async (tx) => {
-      await tx.segmentDependency.deleteMany({
-        where: { childId: segmentId },
-      });
-      if (parentIds.length > 0) {
+      // Drop edges that are no longer referenced by the current rule.
+      if (parentIds.length === 0) {
+        await tx.segmentDependency.deleteMany({
+          where: { childId: segmentId },
+        });
+      } else {
+        await tx.segmentDependency.deleteMany({
+          where: { childId: segmentId, parentId: { notIn: parentIds } },
+        });
+        // Idempotent insert: a concurrent transaction that already wrote
+        // (parentId, segmentId) won't make us crash.
         await tx.segmentDependency.createMany({
           data: parentIds.map((parentId) => ({ parentId, childId: segmentId })),
+          skipDuplicates: true,
         });
       }
     });
